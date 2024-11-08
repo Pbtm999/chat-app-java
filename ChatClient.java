@@ -1,5 +1,8 @@
 import java.io.*;
 import java.net.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
+import java.nio.charset.Charset;
 import java.util.*;
 import java.awt.*;
 import java.awt.event.*;
@@ -16,8 +19,9 @@ public class ChatClient {
 
     // Se for necessário adicionar variáveis ao objecto ChatClient, devem
     // ser colocadas aqui
-
-
+    private String serverIp;
+    private int port;
+    private SocketChannel sc;
 
     
     // Método a usar para acrescentar uma string à caixa de texto
@@ -62,6 +66,12 @@ public class ChatClient {
 
         // Se for necessário adicionar código de inicialização ao
         // construtor, deve ser colocado aqui
+        serverIp = server;
+        this.port = port;
+
+        sc = SocketChannel.open();
+        sc.configureBlocking(false);
+        sc.connect(new InetSocketAddress(serverIp, this.port));
 
 
 
@@ -72,9 +82,10 @@ public class ChatClient {
     // na caixa de entrada
     public void newMessage(String message) throws IOException {
         // PREENCHER AQUI com código que envia a mensagem ao servidor
+        //Charset charset = Charset.forName("UTF-8");
+        //ByteBuffer buffer = charset.encode(message);
 
-
-
+        //sc.write(buffer);
     }
 
     
