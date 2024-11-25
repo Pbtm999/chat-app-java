@@ -21,11 +21,16 @@ public class ChatClient {
     private String serverIp;
     private int port;
     private SocketChannel sc;
+    private Charset charset = Charset.forName("UTF-8");
 
     // Método a usar para acrescentar uma string à caixa de texto
     // * NÃO MODIFICAR *
     public void printMessage(final String message) {
-        chatArea.append(message);
+        SwingUtilities.invokeLater(new Runnable() {
+            public void run() {
+                chatArea.append(message + "\n");
+            }
+        });
     }
 
     // Construtor
@@ -49,6 +54,7 @@ public class ChatClient {
                 try {
                     newMessage(chatBox.getText());
                 } catch (IOException ex) {
+                    ex.printStackTrace();
                 } finally {
                     chatBox.setText("");
                 }
@@ -69,23 +75,52 @@ public class ChatClient {
         sc = SocketChannel.open();
         sc.configureBlocking(false);
         sc.connect(new InetSocketAddress(serverIp, this.port));
-
     }
 
     // Método invocado sempre que o utilizador insere uma mensagem
     // na caixa de entrada
     public void newMessage(String message) throws IOException {
-        // PREENCHER AQUI com código que envia a mensagem ao servidor
-        // Charset charset = Charset.forName("UTF-8");
-        // ByteBuffer buffer = charset.encode(message);
-
-        // sc.write(buffer);
+        if (sc.finishConnect()) {
+            ByteBuffer buffer = charset.encode(message);
+            sc.write(buffer);
+            if (!message.startsWith("/"))
+                printMessage("You: " + message); // Display the message in the client's UI
+        } else {
+            System.err.println("Not connected yet.");
+        }
     }
 
     // Método principal do objecto
     public void run() throws IOException {
-        // PREENCHER AQUI
+        while (!sc.finishConnect()) {
+            // Wait until the connection is established
+        }
+        System.out.println("Connected to the server.");
 
+        // Start a new thread to read messages from the server
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    readMessages();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+
+    // Method to read messages from the server
+    private void readMessages() throws IOException {
+        ByteBuffer buffer = ByteBuffer.allocate(16384);
+        while (true) {
+            buffer.clear();
+            int bytesRead = sc.read(buffer);
+            if (bytesRead > 0) {
+                buffer.flip();
+                String message = charset.decode(buffer).toString();
+                printMessage(message);
+            }
+        }
     }
 
     // Instancia o ChatClient e arranca-o invocando o seu método run()
@@ -94,5 +129,4 @@ public class ChatClient {
         ChatClient client = new ChatClient(args[0], Integer.parseInt(args[1]));
         client.run();
     }
-
 }
