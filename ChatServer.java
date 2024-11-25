@@ -13,6 +13,10 @@ public class ChatServer {
   static private final Charset charset = Charset.forName("UTF8");
   static private final CharsetDecoder decoder = charset.newDecoder();
 
+  // Maps to store user names and chat rooms
+  static private final Map<SocketChannel, String> userNames = new HashMap<>();
+  static private final Map<String, Set<SocketChannel>> chatRooms = new HashMap<>();
+
   static public void main(String args[]) throws Exception {
     // Parse port from command line
     int port = Integer.parseInt(args[0]);
@@ -122,43 +126,95 @@ public class ChatServer {
 
     buffer.clear();
 
-    Object user = senderKey.attachment();
-    if (user == null) {
-      int bytesRead = sender.read(buffer);
-
-      if (bytesRead == -1) {
-        return false;
-      }
-
-      buffer.flip();
-      user = decoder.decode(buffer).toString().trim();
-      senderKey.attach(user);
-      System.out.println("User identified as: " + user);
-      return true;
-    }
-
     int bytesRead = sender.read(buffer);
-
     // If no data, close the connection
-    if (bytesRead == -1) {
+    if (bytesRead == -1)
       return false;
-    }
 
     buffer.flip(); // Prepare buffer for reading
 
-    // Echo the received message back to the client
-    for (SelectionKey key : selector.keys()) {
-      if (key.channel() instanceof SocketChannel && key.isValid() && key.channel() != sender) {
-        SocketChannel client = (SocketChannel) key.channel();
+    String message = decoder.decode(buffer).toString().trim();
+    if (message.startsWith("/"))
+      processCommand(sender, message);
+    else
+      broadcastMessage(sender, message);
 
-        // Send the message to the client
-        String message = user + ": " + charset.decode(buffer).toString();
-        ByteBuffer messageBuffer = charset.encode(message);
-        client.write(messageBuffer);
+    return true;
+  }
+
+  static private void processCommand(SocketChannel sender, String command) throws IOException {
+    String[] parts = command.split(" ", 2);
+    String cmd = parts[0];
+    String arg = parts.length > 1 ? parts[1] : "";
+
+    switch (cmd) {
+      case "/nick" -> changeNick(sender, arg);
+      case "/join" -> joinRoom(sender, arg);
+      case "/leave" -> leaveRoom(sender);
+      case "/bye" -> disconnect(sender);
+      default -> sendMessage(sender, "Unknown command: " + cmd);
+    }
+  }
+
+  static private void changeNick(SocketChannel sender, String newNick) throws IOException {
+    if (newNick.isEmpty() || userNames.containsValue(newNick)) {
+      sendMessage(sender, "Invalid or already taken nickname.");
+      return;
+    }
+    userNames.put(sender, newNick);
+    sendMessage(sender, "Nickname changed to " + newNick);
+  }
+
+  static private void joinRoom(SocketChannel sender, String room) throws IOException {
+    if (room.isEmpty()) {
+      sendMessage(sender, "Room name cannot be empty.");
+      return;
+    }
+    leaveRoom(sender);
+    chatRooms.computeIfAbsent(room, k -> new HashSet<>()).add(sender);
+    sendMessage(sender, "Joined room " + room);
+  }
+
+  static private void leaveRoom(SocketChannel sender) throws IOException {
+    for (Set<SocketChannel> room : chatRooms.values()) {
+      if (room.remove(sender)) {
+        sendMessage(sender, "Left the room.");
+        break;
+      }
+    }
+  }
+
+  static private void disconnect(SocketChannel sender) throws IOException {
+    leaveRoom(sender);
+    userNames.remove(sender);
+    sender.close();
+    sendMessage(sender, "Disconnected from the server.");
+  }
+
+  static private void broadcastMessage(SocketChannel sender, String message) throws IOException {
+    String user = userNames.get(sender);
+    if (user == null) {
+      sendMessage(sender, "You must set a nickname using /nick before sending messages.");
+      return;
+    }
+
+    for (Set<SocketChannel> room : chatRooms.values()) {
+      if (room.contains(sender)) {
+        for (SocketChannel client : room) {
+          if (client != sender) {
+            sendMessage(client, user + ": " + message);
+          }
+        }
+        return;
       }
     }
 
-    return true;
+    sendMessage(sender, "You must join a room using /join before sending messages.");
+  }
+
+  static private void sendMessage(SocketChannel client, String message) throws IOException {
+    ByteBuffer buffer = charset.encode(message + "\n");
+    client.write(buffer);
   }
 
 }
