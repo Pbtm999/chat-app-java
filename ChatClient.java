@@ -8,7 +8,6 @@ import java.awt.*;
 import java.awt.event.*;
 import javax.swing.*;
 
-
 public class ChatClient {
 
     // Variáveis relacionadas com a interface gráfica --- * NÃO MODIFICAR *
@@ -23,14 +22,12 @@ public class ChatClient {
     private int port;
     private SocketChannel sc;
 
-    
     // Método a usar para acrescentar uma string à caixa de texto
     // * NÃO MODIFICAR *
     public void printMessage(final String message) {
         chatArea.append(message);
     }
 
-    
     // Construtor
     public ChatClient(String server, int port) throws IOException {
 
@@ -73,30 +70,23 @@ public class ChatClient {
         sc.configureBlocking(false);
         sc.connect(new InetSocketAddress(serverIp, this.port));
 
-
-
     }
-
 
     // Método invocado sempre que o utilizador insere uma mensagem
     // na caixa de entrada
     public void newMessage(String message) throws IOException {
         // PREENCHER AQUI com código que envia a mensagem ao servidor
-        //Charset charset = Charset.forName("UTF-8");
-        //ByteBuffer buffer = charset.encode(message);
+        // Charset charset = Charset.forName("UTF-8");
+        // ByteBuffer buffer = charset.encode(message);
 
-        //sc.write(buffer);
+        // sc.write(buffer);
     }
 
-    
     // Método principal do objecto
     public void run() throws IOException {
         // PREENCHER AQUI
 
-
-
     }
-    
 
     // Instancia o ChatClient e arranca-o invocando o seu método run()
     // * NÃO MODIFICAR *
@@ -106,4 +96,3 @@ public class ChatClient {
     }
 
 }
-
