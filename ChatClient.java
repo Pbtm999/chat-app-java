@@ -28,7 +28,7 @@ public class ChatClient {
     public void printMessage(final String message) {
         SwingUtilities.invokeLater(new Runnable() {
             public void run() {
-                chatArea.append(message + "\n");
+                chatArea.append(message.strip() + "\n");
             }
         });
     }

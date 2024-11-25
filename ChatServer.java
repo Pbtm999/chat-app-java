@@ -19,7 +19,7 @@ public class ChatServer {
 
   static public void main(String args[]) throws Exception {
     // Parse port from command line
-    int port = Integer.parseInt(args[0]);
+    int port = args.length > 0 ? Integer.parseInt(args[0]) : 8000;
 
     try {
       // Instead of creating a ServerSocket, create a ServerSocketChannel
@@ -71,6 +71,8 @@ public class ChatServer {
 
             // Register it with the selector, for reading
             sc.register(selector, SelectionKey.OP_READ);
+
+            sendMessage(sc, "[Server] Welcome to the chat server! See available commands with /help");
           } else if (key.isReadable()) {
 
             SocketChannel sc = null;
@@ -137,7 +139,7 @@ public class ChatServer {
     if (message.startsWith("/"))
       processCommand(sender, message);
     else
-      broadcastMessage(sender, message);
+      broadcastMessage(sender, message, false, false);
 
     return true;
   }
@@ -148,37 +150,52 @@ public class ChatServer {
     String arg = parts.length > 1 ? parts[1] : "";
 
     switch (cmd) {
+      // main commands
       case "/nick" -> changeNick(sender, arg);
       case "/join" -> joinRoom(sender, arg);
       case "/leave" -> leaveRoom(sender);
       case "/bye" -> disconnect(sender);
-      default -> sendMessage(sender, "Unknown command: " + cmd);
+      // other commands
+      case "/rooms" -> listRooms(sender);
+      case "/users" -> listUsers(sender);
+      case "/help" ->
+        sendMessage(sender,
+            "[Server] Available commands: /nick [username], /join [room], /leave, /bye, /rooms, /users, /help");
+      default -> sendMessage(sender, "[Server] Unknown command: " + cmd);
     }
   }
 
   static private void changeNick(SocketChannel sender, String newNick) throws IOException {
     if (newNick.isEmpty() || userNames.containsValue(newNick)) {
-      sendMessage(sender, "Invalid or already taken nickname.");
+      sendMessage(sender, "[Server] Invalid or already taken nickname.");
       return;
     }
+    broadcastMessage(sender, "[Server] User " + userNames.get(sender) + " changed nickname to " + newNick, true, false);
     userNames.put(sender, newNick);
-    sendMessage(sender, "Nickname changed to " + newNick);
+    sendMessage(sender, "[Server] Nickname changed to " + newNick);
   }
 
   static private void joinRoom(SocketChannel sender, String room) throws IOException {
+    String user = userNames.get(sender);
+    if (user == null) {
+      sendMessage(sender, "[Server] You must set a nickname using /nick before joining a room");
+      return;
+    }
     if (room.isEmpty()) {
-      sendMessage(sender, "Room name cannot be empty.");
+      sendMessage(sender, "[Server] Room name cannot be empty.");
       return;
     }
     leaveRoom(sender);
     chatRooms.computeIfAbsent(room, k -> new HashSet<>()).add(sender);
-    sendMessage(sender, "Joined room " + room);
+    broadcastMessage(sender, "[Server] User " + userNames.get(sender) + " joined the room", false, false);
+    sendMessage(sender, "[Server] Joined room " + room);
   }
 
   static private void leaveRoom(SocketChannel sender) throws IOException {
     for (Set<SocketChannel> room : chatRooms.values()) {
       if (room.remove(sender)) {
-        sendMessage(sender, "Left the room.");
+        broadcastMessage(sender, "[Server] User " + userNames.get(sender) + " left the room", false, true);
+        sendMessage(sender, "[Server] You left the room");
         break;
       }
     }
@@ -187,17 +204,44 @@ public class ChatServer {
   static private void disconnect(SocketChannel sender) throws IOException {
     leaveRoom(sender);
     userNames.remove(sender);
+    sendMessage(sender, "[Server] Disconnected from the server");
+    sendMessage(sender, "[Server] You will no longer be able to communicate with the server through this process");
     sender.close();
-    sendMessage(sender, "Disconnected from the server.");
   }
 
-  static private void broadcastMessage(SocketChannel sender, String message) throws IOException {
-    String user = userNames.get(sender);
-    if (user == null) {
-      sendMessage(sender, "You must set a nickname using /nick before sending messages.");
+  static private void listRooms(SocketChannel sender) throws IOException {
+    if (chatRooms.isEmpty()) {
+      sendMessage(sender, "[Server] There are no rooms available, use /join to create one");
       return;
     }
+    sendMessage(sender, "[Server] Available rooms:");
+    for (String room : chatRooms.keySet()) {
+      sendMessage(sender, room);
+    }
+  }
 
+  static private void listUsers(SocketChannel sender) throws IOException {
+    for (Map.Entry<String, Set<SocketChannel>> entry : chatRooms.entrySet()) {
+      if (entry.getValue().contains(sender)) {
+        sendMessage(sender, "[Server] Users in room " + entry.getKey() + ":");
+        for (SocketChannel client : entry.getValue()) {
+          sendMessage(sender, userNames.get(client));
+        }
+        return;
+      }
+    }
+    sendMessage(sender, "[Server] You must join a room using /join before listing users");
+  }
+
+  static private void broadcastMessage(SocketChannel sender, String message, Boolean isNickCommand,
+      Boolean isLeaveCommand)
+      throws IOException {
+    String user = userNames.get(sender);
+    if (user == null) {
+      if (!isNickCommand)
+        sendMessage(sender, "[Server] You must set a nickname using /nick before sending messages.");
+      return;
+    }
     for (Set<SocketChannel> room : chatRooms.values()) {
       if (room.contains(sender)) {
         for (SocketChannel client : room) {
@@ -208,13 +252,12 @@ public class ChatServer {
         return;
       }
     }
-
-    sendMessage(sender, "You must join a room using /join before sending messages.");
+    if (!isLeaveCommand)
+      sendMessage(sender, "[Server] You must join a room using /join before sending messages");
   }
 
   static private void sendMessage(SocketChannel client, String message) throws IOException {
-    ByteBuffer buffer = charset.encode(message + "\n");
+    ByteBuffer buffer = charset.encode(message);
     client.write(buffer);
   }
-
 }
