@@ -1,11 +1,11 @@
+import java.awt.*;
+import java.awt.event.*;
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
-import java.util.*;
-import java.awt.*;
-import java.awt.event.*;
+import java.util.Arrays;
 import javax.swing.*;
 
 public class ChatClient {
@@ -26,11 +26,17 @@ public class ChatClient {
     // Método a usar para acrescentar uma string à caixa de texto
     // * NÃO MODIFICAR *
     public void printMessage(final String message) {
-        SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-                chatArea.append(message.strip() + "\n");
-            }
+        SwingUtilities.invokeLater(() -> {
+            chatArea.append(message.strip() + "\n");
         });
+    }
+
+    public void printArray(final String[] array) {
+        String message = "";
+        for (String s : array) {
+            message += s + " ";
+        }
+        printMessage(message);
     }
 
     // Construtor
@@ -48,19 +54,17 @@ public class ChatClient {
         frame.setVisible(true);
         chatArea.setEditable(false);
         chatBox.setEditable(true);
-        chatBox.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                try {
-                    newMessage(chatBox.getText());
-                } catch (IOException ex) {
-                    ex.printStackTrace();
-                } finally {
-                    chatBox.setText("");
-                }
+        chatBox.addActionListener((ActionEvent e) -> {
+            try {
+                newMessage(chatBox.getText());
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            } finally {
+                chatBox.setText("");
             }
         });
         frame.addWindowListener(new WindowAdapter() {
+            @Override
             public void windowOpened(WindowEvent e) {
                 chatBox.requestFocusInWindow();
             }
@@ -83,11 +87,8 @@ public class ChatClient {
         if (sc.finishConnect()) {
             ByteBuffer buffer = charset.encode(message);
             sc.write(buffer);
-            if (!message.startsWith("/"))
-                printMessage("You: " + message); // Display the message in the client's UI
-        } else {
+        } else
             System.err.println("Not connected yet.");
-        }
     }
 
     // Método principal do objecto
@@ -98,13 +99,11 @@ public class ChatClient {
         System.out.println("Connected to the server.");
 
         // Start a new thread to read messages from the server
-        new Thread(new Runnable() {
-            public void run() {
-                try {
-                    readMessages();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+        new Thread(() -> {
+            try {
+                readMessages();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         }).start();
     }
@@ -117,9 +116,33 @@ public class ChatClient {
             int bytesRead = sc.read(buffer);
             if (bytesRead > 0) {
                 buffer.flip();
-                String message = charset.decode(buffer).toString();
-                printMessage(message);
+                String message = charset.decode(buffer).toString().trim();
+                handleServerMessage(message);
             }
+        }
+    }
+
+    // Method to handle messages from the server
+    private void handleServerMessage(String message) {
+        String[] parts = message.split(" ");
+        String command = parts[0];
+        String[] args = Arrays.copyOfRange(parts, 1, parts.length);
+
+        switch (command) {
+            case "OK" -> printArray(args);
+            case "ERROR" -> printArray(args);
+            case "MESSAGE" -> {
+                String text = "";
+                for (String s : Arrays.copyOfRange(args, 1, args.length)) {
+                    text += s + " ";
+                }
+                printMessage(args[0] + ": " + text);
+            }
+            case "NEWNICK" -> printMessage("[Server] User " + args[0] + " changed nickname to " + args[1]);
+            case "JOINED" -> printMessage("[Server] User " + args[0] + " joined the room");
+            case "LEFT" -> printMessage("[Server] User " + args[0] + " left the room");
+            case "BYE" -> printArray(args);
+            default -> printMessage("[Server] Unknown message: " + message);
         }
     }
 

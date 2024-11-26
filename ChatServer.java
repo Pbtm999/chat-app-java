@@ -6,6 +6,12 @@ import java.nio.charset.*;
 import java.util.*;
 
 public class ChatServer {
+  public enum ClientState {
+    INIT,
+    OUTSIDE,
+    INSIDE
+  }
+
   // A pre-allocated buffer for the received data
   static private final ByteBuffer buffer = ByteBuffer.allocate(16384);
 
@@ -16,6 +22,7 @@ public class ChatServer {
   // Maps to store user names and chat rooms
   static private final Map<SocketChannel, String> userNames = new HashMap<>();
   static private final Map<String, Set<SocketChannel>> chatRooms = new HashMap<>();
+  static private final Map<SocketChannel, ClientState> clientStates = new HashMap<>();
 
   static public void main(String args[]) throws Exception {
     // Parse port from command line
@@ -72,7 +79,8 @@ public class ChatServer {
             // Register it with the selector, for reading
             sc.register(selector, SelectionKey.OP_READ);
 
-            sendMessage(sc, "[Server] Welcome to the chat server! See available commands with /help");
+            // Set initial state
+            clientStates.put(sc, ClientState.INIT);
           } else if (key.isReadable()) {
 
             SocketChannel sc = null;
@@ -81,7 +89,7 @@ public class ChatServer {
 
               // It's incoming data on a connection -- process it
               sc = (SocketChannel) key.channel();
-              boolean ok = processInput(sc, selector, key);
+              boolean ok = processInput(sc);
 
               // If the connection is dead, remove it from the selector
               // and close it
@@ -123,7 +131,7 @@ public class ChatServer {
   }
 
   // Just read the message from the socket and send it to stdout
-  static private boolean processInput(SocketChannel sender, Selector selector, SelectionKey senderKey)
+  static private boolean processInput(SocketChannel sender)
       throws IOException {
 
     buffer.clear();
@@ -136,10 +144,13 @@ public class ChatServer {
     buffer.flip(); // Prepare buffer for reading
 
     String message = decoder.decode(buffer).toString().trim();
-    if (message.startsWith("/"))
+    if (message.startsWith("/") && !message.startsWith("//")) // message is a command
       processCommand(sender, message);
-    else
-      broadcastMessage(sender, message, false, false);
+    else if (clientStates.get(sender) == ClientState.INSIDE) {
+      broadcastMessage(sender, "MESSAGE " + userNames.get(sender) + " " + message);
+      sendMessage(sender, "MESSAGE " + userNames.get(sender) + " " + message);
+    } else
+      sendMessage(sender, "ERROR [Server] You must join a room using /join before sending messages");
 
     return true;
   }
@@ -153,59 +164,70 @@ public class ChatServer {
       // main commands
       case "/nick" -> changeNick(sender, arg);
       case "/join" -> joinRoom(sender, arg);
-      case "/leave" -> leaveRoom(sender);
+      case "/leave" -> leaveRoom(sender, true);
       case "/bye" -> disconnect(sender);
       // other commands
       case "/rooms" -> listRooms(sender);
       case "/users" -> listUsers(sender);
-      case "/help" ->
-        sendMessage(sender,
-            "[Server] Available commands: /nick [username], /join [room], /leave, /bye, /rooms, /users, /help");
+      case "/help" -> sendMessage(sender,
+          "[Server] Available commands: /nick [username], /join [room], /leave, /bye, /rooms, /users, /help");
       default -> sendMessage(sender, "[Server] Unknown command: " + cmd);
     }
   }
 
   static private void changeNick(SocketChannel sender, String newNick) throws IOException {
     if (newNick.isEmpty() || userNames.containsValue(newNick)) {
-      sendMessage(sender, "[Server] Invalid or already taken nickname.");
+      sendMessage(sender, "ERROR [Server] Invalid or already taken nickname.");
       return;
     }
-    broadcastMessage(sender, "[Server] User " + userNames.get(sender) + " changed nickname to " + newNick, true, false);
+
+    if (clientStates.get(sender) == ClientState.INIT || clientStates.get(sender) == ClientState.OUTSIDE)
+      clientStates.put(sender, ClientState.OUTSIDE);
+    if (clientStates.get(sender) == ClientState.INSIDE)
+      broadcastMessage(sender, "NEWNICK " + userNames.get(sender) + " " + newNick);
+
+    sendMessage(sender, "OK [Server] Nickname changed to " + newNick);
     userNames.put(sender, newNick);
-    sendMessage(sender, "[Server] Nickname changed to " + newNick);
   }
 
   static private void joinRoom(SocketChannel sender, String room) throws IOException {
-    String user = userNames.get(sender);
-    if (user == null) {
-      sendMessage(sender, "[Server] You must set a nickname using /nick before joining a room");
+    if (clientStates.get(sender) == ClientState.INIT || room.isEmpty()) {
+      System.out.println("Client is in INIT state or room is empty");
       return;
     }
-    if (room.isEmpty()) {
-      sendMessage(sender, "[Server] Room name cannot be empty.");
-      return;
+    if (clientStates.get(sender) == ClientState.INSIDE) {
+      leaveRoom(sender, false);
     }
-    leaveRoom(sender);
+    sendMessage(sender, "OK [Server] Joined room " + room);
     chatRooms.computeIfAbsent(room, k -> new HashSet<>()).add(sender);
-    broadcastMessage(sender, "[Server] User " + userNames.get(sender) + " joined the room", false, false);
-    sendMessage(sender, "[Server] Joined room " + room);
+    clientStates.put(sender, ClientState.INSIDE);
+    broadcastMessage(sender, "JOINED " + userNames.get(sender));
   }
 
-  static private void leaveRoom(SocketChannel sender) throws IOException {
+  static private void leaveRoom(SocketChannel sender, Boolean sendOkToUser) throws IOException {
+    if (clientStates.get(sender) != ClientState.INSIDE) {
+      System.out.println("Client is in INIT state or is not in a room");
+      return;
+    }
     for (Set<SocketChannel> room : chatRooms.values()) {
-      if (room.remove(sender)) {
-        broadcastMessage(sender, "[Server] User " + userNames.get(sender) + " left the room", false, true);
-        sendMessage(sender, "[Server] You left the room");
+      if (room.contains(sender)) {
+        if (sendOkToUser)
+          sendMessage(sender, "OK [Server] You left the room");
+        broadcastMessage(sender, "LEFT " + userNames.get(sender));
+        room.remove(sender);
+        clientStates.put(sender, ClientState.OUTSIDE);
         break;
       }
     }
   }
 
   static private void disconnect(SocketChannel sender) throws IOException {
-    leaveRoom(sender);
+    if (clientStates.get(sender) == ClientState.INSIDE) {
+      leaveRoom(sender, false);
+    }
     userNames.remove(sender);
-    sendMessage(sender, "[Server] Disconnected from the server");
-    sendMessage(sender, "[Server] You will no longer be able to communicate with the server through this process");
+    clientStates.remove(sender);
+    sendMessage(sender, "BYE [Server] Disconnected from the server");
     sender.close();
   }
 
@@ -233,27 +255,19 @@ public class ChatServer {
     sendMessage(sender, "[Server] You must join a room using /join before listing users");
   }
 
-  static private void broadcastMessage(SocketChannel sender, String message, Boolean isNickCommand,
-      Boolean isLeaveCommand)
+  static private void broadcastMessage(SocketChannel sender, String message)
       throws IOException {
     String user = userNames.get(sender);
-    if (user == null) {
-      if (!isNickCommand)
-        sendMessage(sender, "[Server] You must set a nickname using /nick before sending messages.");
+    if (user == null)
       return;
-    }
     for (Set<SocketChannel> room : chatRooms.values()) {
       if (room.contains(sender)) {
-        for (SocketChannel client : room) {
-          if (client != sender) {
-            sendMessage(client, user + ": " + message);
-          }
-        }
+        for (SocketChannel client : room)
+          if (client != sender)
+            sendMessage(client, message);
         return;
       }
     }
-    if (!isLeaveCommand)
-      sendMessage(sender, "[Server] You must join a room using /join before sending messages");
   }
 
   static private void sendMessage(SocketChannel client, String message) throws IOException {
