@@ -171,7 +171,13 @@ public class ChatServer {
       case "/users" -> listUsers(sender);
       case "/help" -> sendMessage(sender,
           "[Server] Available commands: /nick [username], /join [room], /leave, /bye, /rooms, /users, /help");
-      default -> sendMessage(sender, "[Server] Unknown command: " + cmd);
+      default -> {
+        if (clientStates.get(sender) == ClientState.INSIDE) {
+          broadcastMessage(sender, "MESSAGE " + userNames.get(sender) + " " + command);
+          sendMessage(sender, "MESSAGE " + userNames.get(sender) + " " + command);
+        } else
+          sendMessage(sender, "ERROR [Server] You must join a room using /join before sending messages");
+      }
     }
   }
 
